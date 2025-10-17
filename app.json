@@ -1,61 +1,45 @@
-// ====== 0) Config ======
+// ==== 0) Supabase + offline queue
 const SUPABASE_URL = 'https://hgvimvswbzvhtuaszwqv.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhndmltdnN3Ynp2aHR1YXN6d3F2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2Njg5MDcsImV4cCI6MjA3NjI0NDkwN30.vHtdIuMKCU5Su3ZoMbVLlKKSl3Xd0zxr0lmrG1kPiXc';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// localforage: coadă offline pt. claim-uri
-localforage.config({ name: 'pwa-agenti', storeName: 'offline_queue' });
+localforage.config({ name: 'agenti-pwa', storeName: 'queue' });
 
-// Helpers UI
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
 
-// ====== 1) Tabs ======
-$$('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const tab = btn.dataset.tab;
-    $$('.tab-btn').forEach(b => b.classList.remove('border-cyan-400'));
-    btn.classList.add('border-cyan-400');
-    $$('.tab').forEach(s => s.classList.add('hidden'));
-    $(`#${tab}`).classList.remove('hidden');
-    $(`#${tab}`).classList.add('active');
+// ==== 1) Tabs
+$$('.tab-btn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    $$('.tab-btn').forEach(x=>x.classList.remove('border-neon','text-neon'));
+    b.classList.add('border-neon','text-neon');
+    const tab = b.dataset.tab;
+    $$('.tab').forEach(x=>x.classList.add('hidden'));
+    $('#'+tab).classList.remove('hidden');
+    $('#'+tab).classList.add('active');
   });
 });
 
-// ====== 2) Models în memorie ======
-let PRODUCTS = [];
-let COMPETITORS = [];
-let PRICES = []; // opțional cache local pentru comparativ
-
-// ====== 3) Load bootstrap data ======
-async function loadBootstrap() {
+// ==== 2) Bootstrap data
+let PRODUCTS=[], COMPETITORS=[], PRICES=[];
+async function loadBootstrap(){
   const { data: products } = await supabase.from('products').select('*').order('name');
   PRODUCTS = products || [];
 
   const { data: competitors } = await supabase.from('competitors').select('*').order('name');
   COMPETITORS = competitors || [];
 
-  // populate dropdowns
-  const produsSel = $('#produs-select');
-  const simSel = $('#sim-product');
-  produsSel.innerHTML = '';
-  simSel.innerHTML = '';
-  PRODUCTS.forEach(p => {
-    const o1 = document.createElement('option');
-    o1.value = p.id; o1.textContent = `${p.name}`;
-    produsSel.appendChild(o1);
-
-    const o2 = document.createElement('option');
-    o2.value = p.id; o2.textContent = `${p.name}`;
-    simSel.appendChild(o2);
+  // dropdowns
+  const prodSel = $('#produs-select'), simSel = $('#sim-product');
+  prodSel.innerHTML=''; simSel.innerHTML='';
+  PRODUCTS.forEach(p=>{
+    const o1 = document.createElement('option'); o1.value=p.id; o1.textContent=p.name; prodSel.appendChild(o1);
+    const o2 = document.createElement('option'); o2.value=p.id; o2.textContent=p.name; simSel.appendChild(o2);
   });
-
   const compSel = $('#competitor-select');
-  compSel.innerHTML = '';
-  COMPETITORS.forEach(c => {
-    const o = document.createElement('option');
-    o.value = c.id; o.textContent = c.name;
-    compSel.appendChild(o);
+  compSel.innerHTML='';
+  COMPETITORS.forEach(c=>{
+    const o = document.createElement('option'); o.value=c.id; o.textContent=c.name; compSel.appendChild(o);
   });
 
   await renderCompetitorCards();
@@ -63,238 +47,196 @@ async function loadBootstrap() {
 }
 loadBootstrap();
 
-// ====== 4) Progress cards per competitor ======
-async function countPricesByCompetitor() {
-  // Luăm toate prices și numărăm pe client (simplu). Poți optimiza cu RPC/SQL view.
-  const { data } = await supabase
-    .from('prices')
-    .select('competitor_id', { count: 'exact', head: false });
-
-  const map = new Map();
-  (data || []).forEach(row => {
-    const cId = row.competitor_id;
-    map.set(cId, (map.get(cId) || 0) + 1);
+// ==== 3) Cards progres competitori
+async function countPerCompetitor(){
+  // obținem toate înregistrările (ușor de înțeles; poți optimiza cu view sau RPC dacă vrei)
+  const { data } = await supabase.from('prices').select('competitor_id');
+  const m = new Map();
+  (data||[]).forEach(r=>{
+    m.set(r.competitor_id, (m.get(r.competitor_id)||0)+1);
   });
-  return map;
+  return m;
 }
 
-async function renderCompetitorCards() {
+async function renderCompetitorCards(){
   const container = $('#competitor-cards');
-  container.innerHTML = '';
-  const counts = await countPricesByCompetitor();
-  const total = PRODUCTS.length;
+  container.innerHTML='';
+  const counts = await countPerCompetitor();
+  const total = PRODUCTS.length || 0;
 
-  COMPETITORS.forEach(c => {
-    const completed = counts.get(c.id) || 0;
-    const percent = total ? Math.round((completed / total) * 100) : 0;
+  COMPETITORS.forEach(c=>{
+    const completed = counts.get(c.id)||0;
+    const pct = total ? Math.round(completed/total*100) : 0;
 
-    const card = document.createElement('div');
-    card.className = 'rounded-2xl p-4 bg-gradient-to-br from-fuchsia-700/40 to-cyan-600/30 backdrop-blur border border-white/10 shadow-lg';
+    const card = document.createElement('button');
+    card.className = 'comp-card w-full text-left';
     card.innerHTML = `
       <div class="flex items-center justify-between">
         <div class="font-semibold">${c.name}</div>
         <div class="text-xs opacity-80">${completed}/${total}</div>
       </div>
-      <div class="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
-        <div class="h-full" style="width:${percent}%; background:linear-gradient(90deg,#22d3ee,#a78bfa)"></div>
-      </div>
+      <div class="mt-2 progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>
     `;
+    // tap pe card -> filtrează tabul 2 pe competitor selectat
+    card.addEventListener('click', ()=>{
+      $$('.tab-btn')[1].click(); // switch la tab2
+      $('#search-input').value=''; // doar comută; comparativul arată toți competitorii oricum
+    });
     container.appendChild(card);
   });
 }
+$('#refresh-cards').addEventListener('click', renderCompetitorCards);
 
-// ====== 5) Claim logic (insert cu fallback offline) ======
-$('#add-price-btn').addEventListener('click', async () => {
+// ==== 4) Claim insert (cu fallback offline)
+$('#add-price-btn').addEventListener('click', async ()=>{
   const product_id = $('#produs-select').value;
   const competitor_id = $('#competitor-select').value;
   const price = parseFloat($('#price-input').value);
   const agent = $('#agent-input').value || null;
-
-  if (!product_id || !competitor_id || !(price >= 0)) {
-    return toast('Completează toate câmpurile.');
-  }
+  if(!product_id || !competitor_id || !(price>=0)) return toast('Completează câmpurile.');
 
   const payload = { product_id, competitor_id, price, agent };
 
-  try {
-    // încercăm online
+  try{
     const { error } = await supabase.from('prices').insert(payload).select().single();
-    if (error) {
-      // dacă e duplicate (unique vio), cod Postgres 23505
-      if ((error.code || '').toString() === '23505') {
-        toast('Deja există un preț (claim) pt. acest produs la acest competitor.');
-      } else {
-        // altă eroare → punem în coadă offline
-        await enqueueOffline(payload);
-        toast('Nu s-a putut salva online. Am pus în coadă offline și sincronizăm când revine netul.');
-      }
+    if(error){
+      if((error.code||'')==='23505') return toast('Există deja un preț pt. acest produs la acest competitor.');
+      await queue(payload);
+      toast('Eroare online. Am pus în coadă (offline) și sincronizăm automat.');
     } else {
-      toast('Preț adăugat cu succes!');
-      $('#price-input').value = '';
+      toast('Preț adăugat!');
+      $('#price-input').value='';
       await renderCompetitorCards();
       await loadCompareData();
+      haptic();
     }
-  } catch (e) {
-    // offline sau altă eroare → punem în coadă
-    await enqueueOffline(payload);
-    toast('Ești offline. Am pus în coadă și sincronizăm automat când revine netul.');
+  }catch{
+    await queue(payload);
+    toast('Ești offline. Am pus în coadă și sincronizăm când revine netul.');
   }
 });
 
-function toast(msg) {
-  $('#collect-msg').textContent = msg;
-  setTimeout(() => { $('#collect-msg').textContent = ''; }, 3500);
+function toast(msg){
+  const el = $('#collect-msg');
+  el.textContent = msg;
+  setTimeout(()=>{ el.textContent=''; }, 3500);
 }
-
-async function enqueueOffline(item) {
-  const q = (await localforage.getItem('queue')) || [];
-  q.push({ type: 'insert_price', item, ts: Date.now() });
-  await localforage.setItem('queue', q);
+function haptic(){ if(navigator.vibrate) navigator.vibrate(8); }
+async function queue(item){
+  const q = (await localforage.getItem('q'))||[];
+  q.push({t:'ins', item, ts:Date.now()});
+  await localforage.setItem('q', q);
 }
-
-async function processQueue() {
-  const q = (await localforage.getItem('queue')) || [];
-  if (!q.length) return;
-  const rest = [];
-  for (const job of q) {
-    try {
-      if (job.type === 'insert_price') {
+async function processQueue(){
+  const q = (await localforage.getItem('q'))||[];
+  if(!q.length) return;
+  const rest=[];
+  for(const job of q){
+    try{
+      if(job.t==='ins'){
         const { error } = await supabase.from('prices').insert(job.item);
-        if (error && (error.code || '') !== '23505') {
-          // dacă nu e duplicate, păstrăm jobul
-          rest.push(job);
-        }
+        if(error && (error.code||'')!=='23505') rest.push(job);
       }
-    } catch {
-      rest.push(job);
-    }
+    }catch{ rest.push(job); }
   }
-  await localforage.setItem('queue', rest);
-  if (q.length !== rest.length) {
-    await renderCompetitorCards();
-    await loadCompareData();
-  }
+  await localforage.setItem('q', rest);
+  if(q.length!==rest.length){ await renderCompetitorCards(); await loadCompareData(); }
 }
 window.addEventListener('online', processQueue);
-setInterval(processQueue, 5000); // sync periodic
+setInterval(processQueue, 6000);
 
-// ====== 6) Tab 2 – Comparativ (căutare + dif lei/% + colorare) ======
-async function loadCompareData() {
-  // tragem toate price-urile cu join competitor + product local pt. our_price
-  const { data: prices } = await supabase
+// ==== 5) Comparativ (căutare + dif + culori)
+async function loadCompareData(){
+  const { data } = await supabase
     .from('prices')
     .select(`
-      id,
-      price,
-      product_id,
-      competitor_id,
+      id, price, product_id, competitor_id,
       competitors(name),
       products!inner(id,name,our_price)
     `);
-
-  PRICES = prices || [];
-  renderCompareTable();
+  PRICES = data||[];
+  renderCompare();
 }
+function renderCompare(){
+  const term = ($('#search-input').value||'').toLowerCase();
+  const wrap = $('#compare-rows');
+  wrap.innerHTML='';
+  const rows = PRICES.filter(r => (r.products?.name||'').toLowerCase().includes(term));
 
-function renderCompareTable() {
-  const term = ($('#search-input').value || '').toLowerCase();
-  const tbody = $('#compare-tbody');
-  tbody.innerHTML = '';
+  rows.forEach(r=>{
+    const ours = Number(r.products?.our_price||0);
+    const theirs = Number(r.price||0);
+    const dLei = +(ours-theirs).toFixed(2);
+    const dPct = theirs>0 ? +(((ours-theirs)/theirs)*100).toFixed(2) : 0;
+    const bad = dLei>0;
 
-  // grupăm pe product -> competitor rows
-  const filtered = PRICES.filter(r =>
-    (r.products?.name || '').toLowerCase().includes(term)
-  );
-
-  filtered.forEach(r => {
-    const ours = Number(r.products.our_price || 0);
-    const theirs = Number(r.price || 0);
-    const diffLei = +(ours - theirs).toFixed(2);
-    const diffPct = theirs > 0 ? +(((ours - theirs) / theirs) * 100).toFixed(2) : 0;
-    const bad = diffLei > 0; // noi mai scumpi => roșu
-
-    const tr = document.createElement('tr');
-    tr.className = 'border-t border-white/5';
-    tr.innerHTML = `
-      <td class="px-3 py-2">${r.products.name}</td>
-      <td class="px-3 py-2">${ours.toFixed(2)}</td>
-      <td class="px-3 py-2">${r.competitors?.name || '-'}</td>
-      <td class="px-3 py-2">${theirs.toFixed(2)}</td>
-      <td class="px-3 py-2 ${bad ? 'text-rose-400' : 'text-emerald-400'}">${diffLei.toFixed(2)}</td>
-      <td class="px-3 py-2 ${bad ? 'text-rose-400' : 'text-emerald-400'}">${diffPct.toFixed(2)}%</td>
+    const row = document.createElement('div');
+    row.className = 'grid grid-cols-6 px-3 py-2 items-center';
+    row.innerHTML = `
+      <div class="truncate pr-2">${r.products?.name||'-'}</div>
+      <div>${ours.toFixed(2)}</div>
+      <div class="truncate">${r.competitors?.name||'-'}</div>
+      <div>${theirs.toFixed(2)}</div>
+      <div class="${bad?'k-bad':'k-good'}">${dLei.toFixed(2)}</div>
+      <div class="${bad?'k-bad':'k-good'}">${dPct.toFixed(2)}%</div>
     `;
-    tbody.appendChild(tr);
+    wrap.appendChild(row);
   });
 }
-$('#search-input').addEventListener('input', renderCompareTable);
+$('#search-input').addEventListener('input', renderCompare);
 $('#reload-compare').addEventListener('click', loadCompareData);
 
-// ====== 7) Tab 3 – Simulator coș ======
-let CART = [];
-
-function bestCompetitorPrice(product_id) {
-  const rows = PRICES.filter(r => r.product_id === product_id);
-  if (!rows.length) return { name: '-', price: 0 };
+// ==== 6) Simulator
+let CART=[];
+function bestFor(product_id){
+  const rows = PRICES.filter(x=>x.product_id===product_id);
+  if(!rows.length) return {name:'-', price:0};
   let best = rows[0];
-  rows.forEach(r => { if (r.price < best.price) best = r; });
-  return { name: best.competitors?.name || '-', price: Number(best.price || 0) };
+  rows.forEach(x=>{ if(Number(x.price)<Number(best.price)) best=x; });
+  return {name: best.competitors?.name||'-', price: Number(best.price||0)};
 }
+function recalcCart(){
+  const wrap = $('#sim-rows'); wrap.innerHTML='';
+  let totalOur=0, totalBest=0;
 
-function recalcCart() {
-  const tbody = $('#sim-tbody');
-  tbody.innerHTML = '';
-  let totalOur = 0, totalBestComp = 0;
+  CART.forEach((it, i)=>{
+    const p = PRODUCTS.find(x=>x.id===it.product_id);
+    const ours = Number(p?.our_price||0);
+    const best = bestFor(it.product_id);
+    const dLei = +(ours-best.price).toFixed(2);
+    const dPct = best.price>0 ? +(((ours-best.price)/best.price)*100).toFixed(2) : 0;
+    const bad = dLei>0;
 
-  CART.forEach((item, idx) => {
-    const p = PRODUCTS.find(x => x.id === item.product_id);
-    const ours = Number(p?.our_price || 0);
-    const best = bestCompetitorPrice(item.product_id);
-    const diffLei = +(ours - best.price).toFixed(2);
-    const diffPct = best.price > 0 ? +(((ours - best.price) / best.price) * 100).toFixed(2) : 0;
-    const bad = diffLei > 0;
+    totalOur += ours*it.qty;
+    totalBest += best.price*it.qty;
 
-    totalOur += ours * item.qty;
-    totalBestComp += best.price * item.qty;
-
-    const tr = document.createElement('tr');
-    tr.className = 'border-t border-white/5';
-    tr.innerHTML = `
-      <td class="px-3 py-2">${p?.name || '-'}</td>
-      <td class="px-3 py-2">${ours.toFixed(2)}</td>
-      <td class="px-3 py-2">${best.name}</td>
-      <td class="px-3 py-2">${best.price.toFixed(2)}</td>
-      <td class="px-3 py-2 ${bad ? 'text-rose-400' : 'text-emerald-400'}">${diffLei.toFixed(2)}</td>
-      <td class="px-3 py-2 ${bad ? 'text-rose-400' : 'text-emerald-400'}">${diffPct.toFixed(2)}%</td>
-      <td class="px-3 py-2">${item.qty}</td>
-      <td class="px-3 py-2">
-        <button class="btn ghost text-xs" data-rm="${idx}">Șterge</button>
-      </td>
+    const row = document.createElement('div');
+    row.className = 'grid grid-cols-8 px-3 py-2 items-center';
+    row.innerHTML = `
+      <div class="truncate">${p?.name||'-'}</div>
+      <div>${ours.toFixed(2)}</div>
+      <div class="truncate">${best.name}</div>
+      <div>${best.price.toFixed(2)}</div>
+      <div class="${bad?'k-bad':'k-good'}">${dLei.toFixed(2)}</div>
+      <div class="${bad?'k-bad':'k-good'}">${dPct.toFixed(2)}%</div>
+      <div>${it.qty}</div>
+      <div><button class="btn ghost text-xs" data-rm="${i}">Șterge</button></div>
     `;
-    tbody.appendChild(tr);
+    wrap.appendChild(row);
   });
 
   $('#sim-total').textContent = `${totalOur.toFixed(2)} lei`;
-
-  // discount necesar ca totalul nostru să ajungă la total competitor
   let disc = 0;
-  if (totalOur > 0 && totalBestComp > 0 && totalOur > totalBestComp) {
-    disc = (1 - (totalBestComp / totalOur)) * 100;
-  }
+  if(totalOur>0 && totalBest>0 && totalOur>totalBest) disc = (1 - (totalBest/totalOur))*100;
   $('#sim-discount').textContent = `${disc.toFixed(2)}%`;
 
-  // butoane remove
-  $$('#sim-tbody [data-rm]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const i = +btn.getAttribute('data-rm');
-      CART.splice(i, 1);
-      recalcCart();
-    });
+  $$('#sim-rows [data-rm]').forEach(b=>{
+    b.addEventListener('click', ()=>{ CART.splice(+b.dataset.rm,1); recalcCart(); haptic(); });
   });
 }
-
-$('#sim-add').addEventListener('click', () => {
+$('#sim-add').addEventListener('click', ()=>{
   const product_id = $('#sim-product').value;
-  const qty = Math.max(1, parseInt($('#sim-qty').value || '1', 10));
-  CART.push({ product_id, qty });
-  recalcCart();
+  const qty = Math.max(1, parseInt($('#sim-qty').value||'1',10));
+  CART.push({product_id, qty});
+  recalcCart(); haptic();
 });
